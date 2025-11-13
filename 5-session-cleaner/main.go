@@ -20,17 +20,21 @@ package main
 import (
 	"errors"
 	"log"
+	"sync"
+	"time"
 )
 
 // SessionManager keeps track of all sessions from creation, updating
 // to destroying.
 type SessionManager struct {
 	sessions map[string]Session
+	mu       sync.Mutex
 }
 
 // Session stores the session's data
 type Session struct {
-	Data map[string]interface{}
+	Data     map[string]interface{}
+	createAt time.Time
 }
 
 // NewSessionManager creates a new sessionManager
@@ -39,18 +43,36 @@ func NewSessionManager() *SessionManager {
 		sessions: make(map[string]Session),
 	}
 
+	go func() {
+		for {
+			m.mu.Lock()
+			for id, session := range m.sessions {
+				if time.Since(session.createAt).Seconds() > 5 {
+					delete(m.sessions, id)
+				}
+			}
+			m.mu.Unlock()
+
+			time.Sleep(1 * time.Second)
+		}
+	}()
+
 	return m
 }
 
 // CreateSession creates a new session and returns the sessionID
 func (m *SessionManager) CreateSession() (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	sessionID, err := MakeSessionID()
 	if err != nil {
 		return "", err
 	}
 
 	m.sessions[sessionID] = Session{
-		Data: make(map[string]interface{}),
+		Data:     make(map[string]interface{}),
+		createAt: time.Now(),
 	}
 
 	return sessionID, nil
@@ -78,9 +100,12 @@ func (m *SessionManager) UpdateSessionData(sessionID string, data map[string]int
 	}
 
 	// Hint: you should renew expiry of the session here
+	m.mu.Lock()
 	m.sessions[sessionID] = Session{
-		Data: data,
+		Data:     data,
+		createAt: time.Now(),
 	}
+	m.mu.Unlock()
 
 	return nil
 }
